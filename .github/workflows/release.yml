@@ -1,0 +1,97 @@
+name: Build Binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name for the release (e.g., v0.1.0)"
+        required: true
+        type: string
+      name:
+        description: "Release name (defaults to tag)"
+        required: false
+        type: string
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: asr-proxy-linux-amd64
+            ext: ""
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact_name: asr-proxy-linux-amd64-musl
+            ext: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: asr-proxy-windows-amd64
+            ext: ".exe"
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact_name: asr-proxy-macos-amd64
+            ext: ""
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact_name: asr-proxy-macos-arm64
+            ext: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install MUSL tools (Linux musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.target }}/release/asr-proxy${{ matrix.ext }}"
+          cp "$BIN" "${{ matrix.artifact_name }}${{ matrix.ext }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}${{ matrix.ext }}
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Show artifacts
+        run: ls -lah dist
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.name || inputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/*
